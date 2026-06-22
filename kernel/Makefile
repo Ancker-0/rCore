@@ -34,6 +34,7 @@
 #   FEATURES = profile | ...    Add additional features
 
 ARCH ?= riscv64
+export ARCH
 MODE ?= release
 LOG  ?=
 GRAPHIC ?= off
@@ -120,7 +121,7 @@ qemu_opts += \
 	-serial mon:stdio \
 	-bios default \
 	-device loader,addr=0x80400000,file=$(kernel_img) \
-	-drive file=$(USER_QCOW2),format=qcow2,id=sfs \
+	-drive file=$(USER_QCOW2),format=qcow2,id=sfs,if=none \
 	-device virtio-blk-device,drive=sfs \
 	-device virtio-gpu-device \
 	-device virtio-mouse-device
@@ -138,7 +139,7 @@ qemu_opts += \
 else ifeq ($(BOARD), rcore_vmm_guest)
 qemu_opts += \
 	-machine virt \
-	-cpu rv64,x-h=true \
+	-cpu rv64 \
 	-serial mon:stdio \
 	-bios ../tools/opensbi/fw_jump.elf \
 	-m 1G\
@@ -146,7 +147,7 @@ qemu_opts += \
 else
 qemu_opts += \
 	-machine virt \
-	-cpu rv64,x-h=true \
+	-cpu rv64 \
 	-m 2G \
 	-serial mon:stdio
 ifeq ($(UART2), on)
@@ -158,7 +159,7 @@ endif
 qemu_opts += \
 	-bios ../tools/opensbi/fw_jump.elf  \
 	-device loader,addr=0x80200000,file=$(kernel_img) \
-	-drive file=$(USER_QCOW2),format=qcow2,id=sfs \
+	-drive file=$(USER_QCOW2),format=qcow2,id=sfs,if=none \
 	-device virtio-blk-device,drive=sfs \
 	-device virtio-gpu-device \
 	-device virtio-mouse-device
