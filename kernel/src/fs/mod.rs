@@ -16,6 +16,7 @@ pub use self::file::*;
 pub use self::file_like::*;
 pub use self::pipe::Pipe;
 pub use self::pseudo::*;
+pub use procfs::*;
 use crate::drivers::{BlockDriver, BlockDriverWrapper};
 
 mod devfs;
@@ -27,6 +28,7 @@ mod file_like;
 pub mod ioctl;
 mod pipe;
 mod pseudo;
+mod procfs;
 
 // Hard link user programs
 #[cfg(feature = "link_user")]
@@ -107,6 +109,12 @@ lazy_static! {
             root.create("tmp", FileType::Dir, 0o666).expect("failed to mkdir /tmp")
         });
         tmp.mount(ramfs).expect("failed to mount RamFS");
+
+        let procfs = Procfs::new();
+        let proc = root.find(true, "proc").unwrap_or_else(|_| {
+            root.create("proc", FileType::Dir, 0o555).expect("failed to mkdir /proc")
+        });
+        proc.mount(procfs).expect("failed to mound ProcFS");
 
         root
     };
