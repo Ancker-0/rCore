@@ -47,7 +47,7 @@ impl INode for ProcfsEntryDir {
             ctime: Timespec { sec: 0, nsec: 0 },
             type_: FileType::Dir,
             mode: 0o555,
-            nlinks: 0,
+            nlinks: 2,
             uid: 0,
             gid: 0,
             rdev: 0,
@@ -79,11 +79,15 @@ impl INode for ProcfsEntryDir {
                 let process = PROCESSES.read();
                 let p = process.get(&self.pid);
                 if let Some(p) = p {
-                    PROC_ENTRIES
-                        .iter()
-                        .find(|entry| entry.name == name)
-                        .map(|entry| (entry.func)(p.clone()))
-                        .ok_or(FsError::EntryNotFound)
+                    if let Some(entry_id) = PROC_ENTRIES.iter().position(|entry| entry.name == name)
+                    {
+                        Ok(Arc::new(ProcfsEntry {
+                            pid: self.pid,
+                            entry_id,
+                        }))
+                    } else {
+                        Err(FsError::EntryNotFound)
+                    }
                 } else {
                     Err(FsError::EntryNotFound)
                 }
@@ -94,6 +98,54 @@ impl INode for ProcfsEntryDir {
 
 pub struct ProcfsEntry {
     pub pid: usize,
+    entry_id: usize,
+}
+
+impl INode for ProcfsEntry {
+    fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
+        let process = PROCESSES.read();
+        let p = process.get(&self.pid);
+        if let Some(p) = p {
+            PROC_ENTRIES
+                .get(self.entry_id)
+                .map(|entry| (entry.func)(p.clone()))
+                .ok_or(FsError::EntryNotFound)?
+                .read_at(offset, buf)
+        } else {
+            Err(FsError::EntryNotFound)
+        }
+    }
+    fn write_at(&self, _offset: usize, _buf: &[u8]) -> Result<usize> {
+        Err(FsError::NotSupported)
+    }
+    fn poll(&self) -> Result<PollStatus> {
+        Ok(PollStatus {
+            read: true,
+            write: false,
+            error: false,
+        })
+    }
+    fn metadata(&self) -> Result<Metadata> {
+        Ok(Metadata {
+            dev: 0,
+            inode: 0,
+            size: 0,
+            blk_size: 0,
+            blocks: 0,
+            atime: Timespec { sec: 0, nsec: 0 },
+            mtime: Timespec { sec: 0, nsec: 0 },
+            ctime: Timespec { sec: 0, nsec: 0 },
+            type_: FileType::File,
+            mode: 0,
+            nlinks: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+        })
+    }
+    fn as_any_ref(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 lazy_static! {
