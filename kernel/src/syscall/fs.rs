@@ -37,7 +37,8 @@ impl Syscall<'_> {
         }
         let slice = unsafe { self.vm().check_write_array(base.ptr(), len)? };
 
-        let file_like = proc.get_file_like(fd)?;
+        let mut file_like = proc.get_file_like(fd)?.clone();
+        drop(proc);
         let len = file_like.read(slice).await?;
         Ok(len)
     }
@@ -49,7 +50,8 @@ impl Syscall<'_> {
             info!("write: fd: {}, base: {:?}, len: {:#x}", fd, base, len);
         }
         let slice = unsafe { self.vm().check_read_array(base, len)? };
-        let file_like = proc.get_file_like(fd)?;
+        let mut file_like = proc.get_file_like(fd)?.clone();
+        drop(proc);
         let len = file_like.write(slice)?;
         Ok(len)
     }

@@ -4,7 +4,7 @@ use alloc::{
     sync::Arc,
 };
 use pc_keyboard::KeyCode::T;
-use rcore_fs::vfs::*;
+use rcore_fs::vfs::{FileType::File, *};
 
 use crate::{
     arch::cpu::id,
@@ -34,7 +34,7 @@ impl INode for ProcfsEntryDir {
     }
 
     fn metadata(&self) -> Result<Metadata> {
-        let process = PROCESSES.read();
+        // let process = PROCESSES.read();
         // process.get(&self.pid).and_then(|p|);
         Ok(Metadata {
             dev: 0,
@@ -92,11 +92,24 @@ impl INode for ProcfsEntryDir {
     }
 }
 
+pub struct ProcfsEntry {
+    pub pid: usize,
+}
+
 lazy_static! {
-    pub static ref PROC_ENTRIES: [ProcEntries; 1] = [ProcEntries {
-        name: "status".to_string(),
-        func: |process| Arc::new(Pseudo::new("1", FileType::File)),
-    },];
+    pub static ref PROC_ENTRIES: [ProcEntries; 2] = [
+        ProcEntries {
+            name: "status".to_string(),
+            func: |process| Arc::new(Pseudo::new("1", FileType::File)),
+        },
+        ProcEntries {
+            name: "parent".to_string(),
+            func: |process| {
+                let parent_pid = process.lock().parent.0;
+                Arc::new(Pseudo::new(&parent_pid.to_string(), FileType::File))
+            },
+        }
+    ];
 }
 
 pub struct ProcEntries {
