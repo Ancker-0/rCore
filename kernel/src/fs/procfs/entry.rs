@@ -1,27 +1,36 @@
+use crate::{fs::Pseudo, sync::SpinNoIrqLock as Mutex};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+};
 use pc_keyboard::KeyCode::T;
 use rcore_fs::vfs::*;
 
-use crate::process::{self, PROCESSES};
+use crate::{
+    arch::cpu::id,
+    fs::Procfs,
+    process::{self, Process, PROCESSES},
+};
 
-pub struct ProcfsEntry {
+pub struct ProcfsEntryDir {
     pub pid: usize,
 }
 
-impl INode for ProcfsEntry {
+impl INode for ProcfsEntryDir {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
-        todo!()
+        Err(FsError::IsDir)
     }
 
     fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize> {
-        todo!()
+        Err(FsError::IsDir)
     }
 
     fn poll(&self) -> Result<PollStatus> {
-        todo!()
+        Err(FsError::IsDir)
     }
 
     fn as_any_ref(&self) -> &dyn core::any::Any {
-        todo!()
+        self
     }
 
     fn metadata(&self) -> Result<Metadata> {
@@ -44,4 +53,53 @@ impl INode for ProcfsEntry {
             rdev: 0,
         })
     }
+
+    fn get_entry(&self, id: usize) -> Result<String> {
+        match id {
+            0 => Ok(String::from(".")),
+            1 => Ok(String::from("..")),
+            i => {
+                let process = PROCESSES.read();
+                let p = process.get(&self.pid);
+                if let Some(p) = p {
+                    PROC_ENTRIES
+                        .get(i - 2)
+                        .map(|entry| entry.name.clone())
+                        .ok_or(FsError::EntryNotFound)
+                } else {
+                    Err(FsError::EntryNotFound)
+                }
+            }
+        }
+    }
+    fn find(&self, name: &str) -> Result<Arc<dyn INode>> {
+        match name {
+            "." | ".." => Ok(Procfs::new().root_inode()),
+            name => {
+                let process = PROCESSES.read();
+                let p = process.get(&self.pid);
+                if let Some(p) = p {
+                    PROC_ENTRIES
+                        .iter()
+                        .find(|entry| entry.name == name)
+                        .map(|entry| (entry.func)(p.clone()))
+                        .ok_or(FsError::EntryNotFound)
+                } else {
+                    Err(FsError::EntryNotFound)
+                }
+            }
+        }
+    }
+}
+
+lazy_static! {
+    pub static ref PROC_ENTRIES: [ProcEntries; 1] = [ProcEntries {
+        name: "status".to_string(),
+        func: |process| Arc::new(Pseudo::new("1", FileType::File)),
+    },];
+}
+
+pub struct ProcEntries {
+    name: String,
+    func: fn(Arc<Mutex<Process>>) -> Arc<dyn INode>,
 }

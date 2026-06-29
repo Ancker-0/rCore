@@ -79,7 +79,7 @@ impl FileSystem for Procfs {
                             .and_then(|pid| {
                                 process
                                     .get(&pid)
-                                    .map(|_| Arc::new(entry::ProcfsEntry { pid }) as Arc<dyn INode>)
+                                    .map(|_| Arc::new(entry::ProcfsEntryDir { pid }) as Arc<dyn INode>)
                             })
                             .ok_or(FsError::EntryNotFound)
                     }
