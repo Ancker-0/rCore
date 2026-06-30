@@ -170,7 +170,7 @@ pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
             // TODO: complete default actions
             x if x == SIG_DFL => {
                 match signal {
-                    SIGALRM | SIGHUP | SIGINT => {
+                    SIGALRM | SIGHUP | SIGINT | SIGSEGV => {
                         info!("default action: Term");
                         // TODO: exit code ref please?
                         process.exit(info.signo as usize + 128);

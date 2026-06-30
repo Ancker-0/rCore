@@ -21,7 +21,9 @@ use crate::memory::{
 use crate::process::structs::ElfExt;
 use crate::sync::{EventBus, SpinLock, SpinNoIrqLock as Mutex};
 use crate::{
-    signal::{handle_signal, Siginfo, Signal, SignalAction, SignalStack, Sigset},
+    signal::{
+        handle_signal, send_signal, Siginfo, Signal, SignalAction, SI_KERNEL, SignalStack, Sigset,
+    },
     syscall::handle_syscall,
 };
 use alloc::{
@@ -534,8 +536,16 @@ pub fn spawn(thread: Arc<Thread>) {
                             _ => unreachable!(),
                         };
                         if !handle_user_page_fault_ext(&thread, addr, access_type) {
-                            // TODO: SIGSEGV
-                            panic!("page fault handle failed");
+                            use crate::signal::SiginfoFields;
+                            send_signal(thread.proc.clone(), thread.tid as isize, Siginfo {
+                                signo: Signal::SIGSEGV as i32,
+                                errno: 0,
+                                code: SI_KERNEL,
+                                field: SiginfoFields::default(),
+                            });
+                            thread.proc.lock().exit(128 + Signal::SIGSEGV as usize);
+                            exit = true;
+                            // panic!("page fault handle failed");
                         }
                     }
                     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
