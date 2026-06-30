@@ -420,12 +420,12 @@ impl Syscall<'_> {
         }
     }
 
-    pub fn sys_hide_proc(&mut self, pid: usize) -> SysResult {
+    pub fn sys_hide_proc(&mut self, pid: usize, hidden: usize) -> SysResult {
         let process_table = PROCESSES.read();
         let proc = process_table.get(&pid);
         if let Some(proc) = proc {
             let mut proc = proc.lock();
-            proc.hidden = true;
+            proc.hidden = hidden != 0;
             Ok(0)
         } else {
             Err(ESRCH)

@@ -837,7 +837,8 @@ impl Syscall<'_> {
         );
         let mut proc = self.process();
         let buf = unsafe { self.vm().check_write_array(buf as *mut u8, buf_size)? };
-        let file = proc.get_file(fd)?;
+        let mut file = proc.get_file(fd)?.clone();
+        drop(proc);
         let info = file.metadata()?;
         if info.type_ != FileType::Dir {
             return Err(SysError::ENOTDIR);
