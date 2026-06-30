@@ -1409,9 +1409,17 @@ impl Process {
 
         let follow_max_depth = if follow { FOLLOW_MAX_DEPTH } else { 0 };
         if dirfd == AT_FDCWD {
-            Ok(ROOT_INODE
-                .lookup(&self.cwd)?
-                .lookup_follow(path, follow_max_depth)?)
+            if path.starts_with('/') {
+                // 绝对路径从全局根解析。rcore_fs 的 lookup_follow 见到开头的 '/'
+                // 只会回到 self.fs().root_inode()——即 cwd 所在的那个挂载的根,
+                // 而非全局根;cwd 在挂载点(如 /proc、/dev)里时,绝对路径会被
+                // "吞"进那个挂载而找不到。绝对路径必须从 ROOT_INODE 走。
+                Ok(ROOT_INODE.lookup_follow(path, follow_max_depth)?)
+            } else {
+                Ok(ROOT_INODE
+                    .lookup(&self.cwd)?
+                    .lookup_follow(path, follow_max_depth)?)
+            }
         } else {
             let file = match self.files.get(&dirfd).ok_or(SysError::EBADF)? {
                 FileLike::File(file) => file,
