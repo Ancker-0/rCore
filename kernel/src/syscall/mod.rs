@@ -328,7 +328,7 @@ impl Syscall<'_> {
             SYS_EXIT => self.sys_exit(args[0] as usize),
             SYS_EXIT_GROUP => self.sys_exit_group(args[0]),
             SYS_WAIT4 => {
-                self.sys_wait4(args[0] as isize, UserInOutPtr::from(args[1]))
+                self.sys_wait4(args[0] as isize, UserInOutPtr::from(args[1]), args[2] as usize)
                     .await
             } // TODO: wait4
             SYS_SET_TID_ADDRESS => self.sys_set_tid_address(args[0] as *mut u32),

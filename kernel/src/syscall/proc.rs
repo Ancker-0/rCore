@@ -82,7 +82,7 @@ impl Syscall<'_> {
 
     /// Wait for the process exit.
     /// Return the PID. Store exit code to `wstatus` if it's not null.
-    pub async fn sys_wait4(&mut self, pid: isize, wstatus: UserInOutPtr<i32>) -> SysResult {
+    pub async fn sys_wait4(&mut self, pid: isize, wstatus: UserInOutPtr<i32>, options: usize) -> SysResult {
         info!("wait4: pid: {}, code: {:?}", pid, wstatus);
         let wstatus = if !wstatus.is_null() {
             Some(wstatus)
@@ -181,6 +181,10 @@ impl Syscall<'_> {
             let eventbus = proc.eventbus.clone();
             drop(proc);
 
+            const WNOHANG: usize = 1;
+            if options & WNOHANG != 0 {
+                return Ok(0);  // man 2 waitpid
+            }
             wait_for_event(eventbus.clone(), Event::CHILD_PROCESS_QUIT).await;
             eventbus.lock().clear(Event::CHILD_PROCESS_QUIT);
         }
