@@ -52,6 +52,9 @@ impl FileSystem for Procfs {
                     rdev: 0,
                 })
             }
+            fn create(&self, name: &str, type_: FileType, mode: u32) -> Result<Arc<dyn INode>> {
+                Err(FsError::NotSupported)
+            }
             fn get_entry(&self, id: usize) -> Result<String> {
                 match id {
                     0 => Ok(String::from(".")),

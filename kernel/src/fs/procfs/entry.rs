@@ -33,6 +33,10 @@ impl INode for ProcfsEntryDir {
         self
     }
 
+    fn create(&self, name: &str, type_: FileType, mode: u32) -> Result<Arc<dyn INode>> {
+        Err(FsError::NotSupported)
+    }
+
     fn metadata(&self) -> Result<Metadata> {
         // let process = PROCESSES.read();
         // process.get(&self.pid).and_then(|p|);
