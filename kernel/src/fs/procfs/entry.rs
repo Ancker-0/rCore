@@ -66,10 +66,14 @@ impl INode for ProcfsEntryDir {
                 let process = PROCESSES.read();
                 let p = process.get(&self.pid);
                 if let Some(p) = p {
-                    PROC_ENTRIES
-                        .get(i - 2)
-                        .map(|entry| entry.name.clone())
-                        .ok_or(FsError::EntryNotFound)
+                    if p.lock().hidden {
+                        Err(FsError::DirRemoved)
+                    } else {
+                        PROC_ENTRIES
+                            .get(i - 2)
+                            .map(|entry| entry.name.clone())
+                            .ok_or(FsError::DirRemoved)
+                    }
                 } else {
                     Err(FsError::EntryNotFound)
                 }

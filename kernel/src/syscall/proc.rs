@@ -82,7 +82,12 @@ impl Syscall<'_> {
 
     /// Wait for the process exit.
     /// Return the PID. Store exit code to `wstatus` if it's not null.
-    pub async fn sys_wait4(&mut self, pid: isize, wstatus: UserInOutPtr<i32>, options: usize) -> SysResult {
+    pub async fn sys_wait4(
+        &mut self,
+        pid: isize,
+        wstatus: UserInOutPtr<i32>,
+        options: usize,
+    ) -> SysResult {
         info!("wait4: pid: {}, code: {:?}", pid, wstatus);
         let wstatus = if !wstatus.is_null() {
             Some(wstatus)
@@ -183,7 +188,7 @@ impl Syscall<'_> {
 
             const WNOHANG: usize = 1;
             if options & WNOHANG != 0 {
-                return Ok(0);  // man 2 waitpid
+                return Ok(0); // man 2 waitpid
             }
             wait_for_event(eventbus.clone(), Event::CHILD_PROCESS_QUIT).await;
             eventbus.lock().clear(Event::CHILD_PROCESS_QUIT);
@@ -412,6 +417,18 @@ impl Syscall<'_> {
             duration,
             thread: self.thread.clone(),
             eventbus: self.thread.proc.lock().eventbus.clone(),
+        }
+    }
+
+    pub fn sys_hide_proc(&mut self, pid: usize) -> SysResult {
+        let process_table = PROCESSES.read();
+        let proc = process_table.get(&pid);
+        if let Some(proc) = proc {
+            let mut proc = proc.lock();
+            proc.hidden = true;
+            Ok(0)
+        } else {
+            Err(ESRCH)
         }
     }
 }

@@ -435,6 +435,7 @@ impl Syscall<'_> {
             SYS_GET_PADDR => {
                 self.sys_get_paddr(args[0] as *const u64, args[1] as *mut u64, args[2])
             }
+            SYS_HIDE_PROC => self.sys_hide_proc(args[0]),
 
             _ => {
                 let ret = match () {

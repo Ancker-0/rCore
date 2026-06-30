@@ -351,6 +351,7 @@ impl Thread {
                 dispositions: [SignalAction::default(); Signal::RTMAX + 1],
                 eventbus: EventBus::new(),
                 shm_identifiers: ShmProc::default(),
+                hidden: false,
             })),
         };
 
@@ -394,6 +395,7 @@ impl Thread {
             dispositions: proc.dispositions.clone(),
             eventbus: EventBus::new(),
             shm_identifiers: proc.shm_identifiers.clone(),
+            hidden: proc.hidden,
         }));
 
         // new thread

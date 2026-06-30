@@ -122,6 +122,8 @@ pub struct Process {
 
     /// shared memory
     pub shm_identifiers: ShmProc,
+
+    pub hidden: bool,
 }
 
 lazy_static! {
