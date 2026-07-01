@@ -585,7 +585,6 @@ impl Syscall<'_> {
         flags: usize,
         mode: usize,
     ) -> SysResult {
-        let mut proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let flags = OpenFlags::from_bits_truncate(flags);
         info!(
@@ -595,8 +594,8 @@ impl Syscall<'_> {
 
         let inode = if flags.contains(OpenFlags::CREATE) {
             let (dir_path, file_name) = split_path(&path);
-            // relative to cwd
-            let dir_inode = proc.lookup_inode_at(dir_fd, dir_path, true)?;
+            // relative to cwd; lookup 阶段不持 proc 锁
+            let dir_inode = self.lookup_inode_at(dir_fd, dir_path, true)?;
             match dir_inode.find(file_name) {
                 Ok(file_inode) => {
                     if flags.contains(OpenFlags::EXCLUSIVE) {
@@ -618,7 +617,7 @@ impl Syscall<'_> {
                 Err(e) => return Err(SysError::from(e)),
             }
         } else {
-            proc.lookup_inode_at(dir_fd, &path, true)?
+            self.lookup_inode_at(dir_fd, &path, true)?
         };
 
         let file = FileHandle::new(
@@ -629,6 +628,8 @@ impl Syscall<'_> {
             flags.contains(OpenFlags::CLOEXEC),
         );
 
+        // 装 fd 时才需要 proc(lookup 已在无锁下完成)
+        let mut proc = self.process();
         // for debugging
         if cfg!(debug_assertions) {
             debug!("files before open {:#?}", proc.files);
@@ -655,6 +656,37 @@ impl Syscall<'_> {
         self.sys_faccessat(AT_FDCWD, path, mode, 0)
     }
 
+    /// 解析路径到 inode,lookup 阶段不持有 proc 锁(避免 /proc 自查死锁)。
+    /// /proc/self/exe、/proc/self/fd 这两个虚拟特例需要 Process 字段,持锁小段处理;
+    /// 通用情况把 cwd + dirfd inode clone 出来,松锁后用 resolve_inode 解析。
+    pub(crate) fn lookup_inode_at(
+        &mut self,
+        dirfd: usize,
+        path: &str,
+        follow: bool,
+    ) -> Result<Arc<dyn INode>, SysError> {
+        let proc = self.process();
+        // 虚拟特例:需要本进程字段,持锁时直接返回
+        if path == "/proc/self/exe" {
+            return Ok(Arc::new(Pseudo::new(&proc.exec_path, FileType::SymLink)));
+        }
+        let (dir, name) = split_path(path);
+        if dir == "/proc/self/fd" {
+            let fd: usize = name.parse().map_err(|_| SysError::EINVAL)?;
+            let fd_path = proc.get_file_const(fd)?.path.clone();
+            return Ok(Arc::new(Pseudo::new(&fd_path, FileType::SymLink)));
+        }
+        // 通用:clone cwd + dirfd inode,松锁后解析
+        let cwd = proc.cwd.clone();
+        let dir_inode = if dirfd == AT_FDCWD {
+            None
+        } else {
+            Some(proc.get_file_const(dirfd)?.inode())
+        };
+        drop(proc);
+        resolve_inode(path, follow, &cwd, dir_inode.as_ref())
+    }
+
     pub fn sys_faccessat(
         &mut self,
         dirfd: usize,
@@ -663,18 +695,16 @@ impl Syscall<'_> {
         flags: usize,
     ) -> SysResult {
         // TODO: check permissions based on uid/gid
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let flags = AtFlags::from_bits_truncate(flags);
-        if !proc.pid.is_init() {
+        if !self.process().pid.is_init() {
             // we trust pid 0 process
             info!(
                 "faccessat: dirfd: {}, path: {:?}, mode: {:#o}, flags: {:?}",
                 dirfd as isize, path, mode, flags
             );
         }
-        let _inode =
-            proc.lookup_inode_at(dirfd, &path, !flags.contains(AtFlags::SYMLINK_NOFOLLOW))?;
+        let _ = self.lookup_inode_at(dirfd, &path, !flags.contains(AtFlags::SYMLINK_NOFOLLOW))?;
         Ok(0)
     }
 
@@ -714,7 +744,6 @@ impl Syscall<'_> {
         stat_ptr: *mut Stat,
         flags: usize,
     ) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let stat_ref = unsafe { self.vm().check_write_ptr(stat_ptr)? };
         let flags = AtFlags::from_bits_truncate(flags);
@@ -723,8 +752,7 @@ impl Syscall<'_> {
             dirfd as isize, path, stat_ptr, flags
         );
 
-        let inode =
-            proc.lookup_inode_at(dirfd, &path, !flags.contains(AtFlags::SYMLINK_NOFOLLOW))?;
+        let inode = self.lookup_inode_at(dirfd, &path, !flags.contains(AtFlags::SYMLINK_NOFOLLOW))?;
         let stat = Stat::from(inode.metadata()?);
         *stat_ref = stat;
         Ok(0)
@@ -745,7 +773,6 @@ impl Syscall<'_> {
         base: *mut u8,
         len: usize,
     ) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let slice = unsafe { self.vm().check_write_array(base, len)? };
         info!(
@@ -753,7 +780,7 @@ impl Syscall<'_> {
             dirfd as isize, path, base, len
         );
 
-        let inode = proc.lookup_inode_at(dirfd, &path, false)?;
+        let inode = self.lookup_inode_at(dirfd, &path, false)?;
         if inode.metadata()?.type_ == FileType::SymLink {
             // TODO: recursive link resolution and loop detection
             let len = inode.read_at(0, slice)?;
@@ -812,10 +839,9 @@ impl Syscall<'_> {
     }
 
     pub fn sys_truncate(&mut self, path: *const u8, len: usize) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         info!("truncate: path: {:?}, len: {}", path, len);
-        proc.lookup_inode(&path)?.resize(len)?;
+        self.lookup_inode_at(AT_FDCWD, &path, true)?.resize(len)?;
         Ok(0)
     }
 
@@ -916,19 +942,20 @@ impl Syscall<'_> {
     }
 
     pub fn sys_chdir(&mut self, path: *const u8) -> SysResult {
-        let mut proc = self.process();
         let path = check_and_clone_cstr(path)?;
-        if !proc.pid.is_init() {
+        if !self.process().pid.is_init() {
             // we trust pid 0 process
             info!("chdir: path: {:?}", path);
         }
 
-        let inode = proc.lookup_inode(&path)?;
+        let inode = self.lookup_inode_at(AT_FDCWD, &path, true)?;
         let info = inode.metadata()?;
         if info.type_ != FileType::Dir {
             return Err(SysError::ENOTDIR);
         }
 
+        // cwd 归一化需要读写 proc.cwd,这里才持锁(lookup 已在无锁下完成)
+        let mut proc = self.process();
         // BUGFIX: '..' and '.'
         if path.len() > 0 {
             let cwd = match path.as_bytes()[0] {
@@ -969,7 +996,6 @@ impl Syscall<'_> {
         newdirfd: usize,
         newpath: *const u8,
     ) -> SysResult {
-        let proc = self.process();
         let oldpath = check_and_clone_cstr(oldpath)?;
         let newpath = check_and_clone_cstr(newpath)?;
         info!(
@@ -979,8 +1005,8 @@ impl Syscall<'_> {
 
         let (old_dir_path, old_file_name) = split_path(&oldpath);
         let (new_dir_path, new_file_name) = split_path(&newpath);
-        let old_dir_inode = proc.lookup_inode_at(olddirfd, old_dir_path, false)?;
-        let new_dir_inode = proc.lookup_inode_at(newdirfd, new_dir_path, false)?;
+        let old_dir_inode = self.lookup_inode_at(olddirfd, old_dir_path, false)?;
+        let new_dir_inode = self.lookup_inode_at(newdirfd, new_dir_path, false)?;
         old_dir_inode.move_(old_file_name, &new_dir_inode, new_file_name)?;
         Ok(0)
     }
@@ -990,7 +1016,6 @@ impl Syscall<'_> {
     }
 
     pub fn sys_mkdirat(&mut self, dirfd: usize, path: *const u8, mode: usize) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         // TODO: check pathname
         info!(
@@ -999,7 +1024,7 @@ impl Syscall<'_> {
         );
 
         let (dir_path, file_name) = split_path(&path);
-        let dir_inode = proc.lookup_inode_at(dirfd, dir_path, true)?;
+        let dir_inode = self.lookup_inode_at(dirfd, dir_path, true)?;
         if dir_inode.find(file_name).is_ok() {
             return Err(SysError::EEXIST);
         }
@@ -1010,12 +1035,11 @@ impl Syscall<'_> {
     }
 
     pub fn sys_rmdir(&mut self, path: *const u8) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         info!("rmdir: path: {:?}", path);
 
         let (dir_path, file_name) = split_path(&path);
-        let dir_inode = proc.lookup_inode(dir_path)?;
+        let dir_inode = self.lookup_inode_at(AT_FDCWD, dir_path, true)?;
         let file_inode = dir_inode.find(file_name)?;
         if file_inode.metadata()?.type_ != FileType::Dir {
             return Err(SysError::ENOTDIR);
@@ -1036,7 +1060,6 @@ impl Syscall<'_> {
         newpath: *const u8,
         flags: usize,
     ) -> SysResult {
-        let proc = self.process();
         let oldpath = check_and_clone_cstr(oldpath)?;
         let newpath = check_and_clone_cstr(newpath)?;
         let flags = AtFlags::from_bits_truncate(flags);
@@ -1046,8 +1069,8 @@ impl Syscall<'_> {
         );
 
         let (new_dir_path, new_file_name) = split_path(&newpath);
-        let inode = proc.lookup_inode_at(olddirfd, &oldpath, true)?;
-        let new_dir_inode = proc.lookup_inode_at(newdirfd, new_dir_path, true)?;
+        let inode = self.lookup_inode_at(olddirfd, &oldpath, true)?;
+        let new_dir_inode = self.lookup_inode_at(newdirfd, new_dir_path, true)?;
         new_dir_inode.link(new_file_name, &inode)?;
         Ok(0)
     }
@@ -1066,7 +1089,6 @@ impl Syscall<'_> {
         newdirfd: usize,
         linkpath: *const u8,
     ) -> SysResult {
-        let proc = self.process();
         let target = check_and_clone_cstr(target)?;
         let linkpath = check_and_clone_cstr(linkpath)?;
         info!(
@@ -1074,7 +1096,7 @@ impl Syscall<'_> {
             target, newdirfd as isize, linkpath,
         );
         let (dir_path, filename) = split_path(&linkpath);
-        let dir_inode = proc.lookup_inode_at(newdirfd, dir_path, true)?;
+        let dir_inode = self.lookup_inode_at(newdirfd, dir_path, true)?;
 
         // If linkpath exists, it will not be overwritten.
         match dir_inode.find(filename) {
@@ -1093,7 +1115,6 @@ impl Syscall<'_> {
     }
 
     pub fn sys_unlinkat(&mut self, dirfd: usize, path: *const u8, flags: usize) -> SysResult {
-        let proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let flags = AtFlags::from_bits_truncate(flags);
         info!(
@@ -1102,7 +1123,7 @@ impl Syscall<'_> {
         );
 
         let (dir_path, file_name) = split_path(&path);
-        let dir_inode = proc.lookup_inode_at(dirfd, dir_path, true)?;
+        let dir_inode = self.lookup_inode_at(dirfd, dir_path, true)?;
         let file_inode = dir_inode.find(file_name)?;
         if file_inode.metadata()?.type_ == FileType::Dir {
             return Err(SysError::EISDIR);
@@ -1169,7 +1190,6 @@ impl Syscall<'_> {
         );
         const UTIME_NOW: usize = 0x3fffffff;
         const UTIME_OMIT: usize = 0x3ffffffe;
-        let mut proc = self.process();
         let mut times = if times.is_null() {
             let epoch = TimeSpec::get_epoch();
             [epoch, epoch]
@@ -1180,7 +1200,7 @@ impl Syscall<'_> {
         let mut inode = if pathname.is_null() {
             let fd = dirfd;
             info!("futimens: fd: {}, times: {:?}", fd, times);
-            proc.get_file(fd)?.inode()
+            self.process().get_file(fd)?.inode()
         } else {
             let pathname = check_and_clone_cstr(pathname)?;
             info!(
@@ -1192,7 +1212,7 @@ impl Syscall<'_> {
                 fcntl::AT_SYMLINK_NOFOLLOW => false,
                 _ => return Err(EINVAL),
             };
-            proc.lookup_inode_at(dirfd, &pathname, follow)?
+            self.lookup_inode_at(dirfd, &pathname, follow)?
         };
         let mut metadata = inode.metadata()?;
         if times[0].nsec != UTIME_OMIT {
@@ -1408,30 +1428,42 @@ impl Process {
             _ => {}
         }
 
-        let follow_max_depth = if follow { FOLLOW_MAX_DEPTH } else { 0 };
-        if dirfd == AT_FDCWD {
-            if path.starts_with('/') {
-                // 绝对路径从全局根解析。rcore_fs 的 lookup_follow 见到开头的 '/'
-                // 只会回到 self.fs().root_inode()——即 cwd 所在的那个挂载的根,
-                // 而非全局根;cwd 在挂载点(如 /proc、/dev)里时,绝对路径会被
-                // "吞"进那个挂载而找不到。绝对路径必须从 ROOT_INODE 走。
-                Ok(ROOT_INODE.lookup_follow(path, follow_max_depth)?)
-            } else {
-                Ok(ROOT_INODE
-                    .lookup(&self.cwd)?
-                    .lookup_follow(path, follow_max_depth)?)
-            }
+        let dir_inode = if dirfd == AT_FDCWD {
+            None
         } else {
-            let file = match self.files.get(&dirfd).ok_or(SysError::EBADF)? {
-                FileLike::File(file) => file,
-                _ => return Err(SysError::EBADF),
-            };
-            Ok(file.lookup_follow(path, follow_max_depth)?)
-        }
+            Some(self.get_file_const(dirfd)?.inode())
+        };
+        resolve_inode(path, follow, &self.cwd, dir_inode.as_ref())
     }
 
     pub fn lookup_inode(&self, path: &str) -> Result<Arc<dyn INode>, SysError> {
         self.lookup_inode_at(AT_FDCWD, path, true)
+    }
+}
+
+/// 通用路径解析,不依赖 &Process(从 lookup_inode_at 抽出)。
+/// /proc/self/exe、/proc/self/fd 这类需要 Process 字段的虚拟特例,由调用方先处理。
+fn resolve_inode(
+    path: &str,
+    follow: bool,
+    cwd: &str,
+    dir_inode: Option<&Arc<dyn INode>>,
+) -> Result<Arc<dyn INode>, SysError> {
+    let follow_max_depth = if follow { FOLLOW_MAX_DEPTH } else { 0 };
+    match dir_inode {
+        // dirfd 相对
+        Some(d) => Ok(d.lookup_follow(path, follow_max_depth)?),
+        // AT_FDCWD
+        None => {
+            if path.starts_with('/') {
+                // 绝对路径:必须从全局根解析。rcore_fs 的 lookup_follow 见到开头的 '/'
+                // 只会回到 cwd 所在挂载的根;cwd 在挂载点(如 /proc、/dev)里时,
+                // 绝对路径会被"吞"进那个挂载而找不到。
+                Ok(ROOT_INODE.lookup_follow(path, follow_max_depth)?)
+            } else {
+                Ok(ROOT_INODE.lookup(cwd)?.lookup_follow(path, follow_max_depth)?)
+            }
+        }
     }
 }
 

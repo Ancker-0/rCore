@@ -214,7 +214,6 @@ impl Syscall<'_> {
         envp: *const *const u8,
     ) -> SysResult {
         info!("exec: path: {:?}, argv: {:?}, envp: {:?}", path, argv, envp);
-        let mut proc = self.process();
         let path = check_and_clone_cstr(path)?;
         let args = check_and_clone_cstr_array(argv)?;
         let envs = check_and_clone_cstr_array(envp)?;
@@ -226,9 +225,10 @@ impl Syscall<'_> {
 
         info!("exec: path: {:?}, args: {:?}, envs: {:?}", path, args, envs);
 
-        // Read program file
-        let inode = proc.lookup_inode(&path)?;
+        // Read program file(lookup 不持 proc 锁,避免 /proc 自查死锁)
+        let inode = self.lookup_inode_at(-100isize as usize, &path, true)?;
 
+        let mut proc = self.process();
         // Make new Thread
         // Re-create vm
         let mut vm = self.vm();
@@ -420,7 +420,10 @@ impl Syscall<'_> {
         }
     }
 
-    pub fn sys_hide_proc(&mut self, pid: usize, hidden: usize) -> SysResult {
+    pub fn sys_hide_proc(&mut self, mut pid: usize, hidden: usize) -> SysResult {
+        if pid == 0 {
+            pid = self.process().pid.get();
+        }
         let process_table = PROCESSES.read();
         let proc = process_table.get(&pid);
         if let Some(proc) = proc {
