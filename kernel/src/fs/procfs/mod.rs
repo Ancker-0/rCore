@@ -1,10 +1,12 @@
+use core::ops::Deref;
+
 use alloc::{
     string::{String, ToString},
     sync::{Arc, Weak},
 };
 use rcore_fs::vfs::*;
 
-use crate::process::{PROCESSES, THREADS};
+use crate::process::{PROCESSES, THREADS, current_thread};
 mod entry;
 
 pub struct Procfs;
@@ -60,15 +62,17 @@ impl FileSystem for Procfs {
                 match id {
                     0 => Ok(String::from(".")),
                     1 => Ok(String::from("..")),
+                    2 => Ok(String::from("self")),
                     i => {
                         let process = PROCESSES.read();
+                        let my_pid = current_thread().unwrap().proc.lock().pid.0;
                         // for j in process.keys() {
                         //     info!("HAHA {:?}\n", process.keys().nth(i - 2));
                         // }
                         process
                             .iter()
                             .filter(|(_, p)| !p.lock().hidden)
-                            .nth(i - 2)
+                            .nth(i - 3)
                             .map(|(pid, _)| pid.to_string())
                             .ok_or(FsError::EntryNotFound)
                     }
@@ -77,6 +81,11 @@ impl FileSystem for Procfs {
             fn find(&self, name: &str) -> Result<Arc<dyn INode>> {
                 match name {
                     "." | ".." => Ok(Procfs::new().root_inode()),
+                    "self" => {
+                        let thread = current_thread().unwrap();
+                        let proc = thread.proc.lock();
+                        Ok(Arc::new(entry::ProcfsEntryDir { pid: proc.pid.0 }))
+                    }
                     name => {
                         let process = PROCESSES.read();
                         name.parse::<usize>()

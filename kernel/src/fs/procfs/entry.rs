@@ -1,5 +1,6 @@
 use crate::{fs::Pseudo, sync::SpinNoIrqLock as Mutex};
 use alloc::{
+    fmt,
     string::{String, ToString},
     sync::Arc,
 };
@@ -107,6 +108,10 @@ impl INode for ProcfsEntryDir {
             }
         }
     }
+
+    fn fs(&self) -> Arc<dyn FileSystem> {
+        Arc::new(Procfs {})
+    }
 }
 
 pub struct ProcfsEntry {
@@ -166,7 +171,7 @@ impl INode for ProcfsEntry {
 }
 
 lazy_static! {
-    pub static ref PROC_ENTRIES: [ProcEntries; 2] = [
+    pub static ref PROC_ENTRIES: [ProcEntries; 3] = [
         ProcEntries {
             name: "status".to_string(),
             func: |process| Arc::new(Pseudo::new("1", FileType::File)),
@@ -177,7 +182,43 @@ lazy_static! {
                 let parent_pid = process.lock().parent.0;
                 Arc::new(Pseudo::new(&parent_pid.to_string(), FileType::File))
             },
-        }
+        },
+        ProcEntries {
+            name: "stat".to_string(),
+            func: |process| {
+                let p = process.lock();
+                Arc::new(Pseudo::new(
+                    &format!(
+                        "{} ({}) {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+                        p.pid,
+                        p.exec_path,
+                        "R",
+                        p.parent.0,
+                        p.pgid,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ),
+                    FileType::File,
+                ))
+            },
+        },
     ];
 }
 
