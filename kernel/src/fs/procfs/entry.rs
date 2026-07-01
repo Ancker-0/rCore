@@ -67,12 +67,12 @@ impl INode for ProcfsEntryDir {
                 let p = process.get(&self.pid);
                 if let Some(p) = p {
                     if p.lock().hidden {
-                        Err(FsError::DirRemoved)
+                        Err(FsError::EntryNotFound)
                     } else {
                         PROC_ENTRIES
                             .get(i - 2)
                             .map(|entry| entry.name.clone())
-                            .ok_or(FsError::DirRemoved)
+                            .ok_or(FsError::EntryNotFound)
                     }
                 } else {
                     Err(FsError::EntryNotFound)
@@ -87,14 +87,19 @@ impl INode for ProcfsEntryDir {
                 let process = PROCESSES.read();
                 let p = process.get(&self.pid);
                 if let Some(p) = p {
-                    if let Some(entry_id) = PROC_ENTRIES.iter().position(|entry| entry.name == name)
-                    {
-                        Ok(Arc::new(ProcfsEntry {
-                            pid: self.pid,
-                            entry_id,
-                        }))
-                    } else {
+                    if p.lock().hidden {
                         Err(FsError::EntryNotFound)
+                    } else {
+                        if let Some(entry_id) =
+                            PROC_ENTRIES.iter().position(|entry| entry.name == name)
+                        {
+                            Ok(Arc::new(ProcfsEntry {
+                                pid: self.pid,
+                                entry_id,
+                            }))
+                        } else {
+                            Err(FsError::EntryNotFound)
+                        }
                     }
                 } else {
                     Err(FsError::EntryNotFound)
@@ -114,11 +119,15 @@ impl INode for ProcfsEntry {
         let process = PROCESSES.read();
         let p = process.get(&self.pid);
         if let Some(p) = p {
-            PROC_ENTRIES
-                .get(self.entry_id)
-                .map(|entry| (entry.func)(p.clone()))
-                .ok_or(FsError::EntryNotFound)?
-                .read_at(offset, buf)
+            if p.lock().hidden {
+                Err(FsError::EntryNotFound)
+            } else {
+                PROC_ENTRIES
+                    .get(self.entry_id)
+                    .map(|entry| (entry.func)(p.clone()))
+                    .ok_or(FsError::EntryNotFound)?
+                    .read_at(offset, buf)
+            }
         } else {
             Err(FsError::EntryNotFound)
         }

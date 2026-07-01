@@ -1,5 +1,6 @@
 use alloc::{
-    string::{String, ToString}, sync::{Arc, Weak},
+    string::{String, ToString},
+    sync::{Arc, Weak},
 };
 use rcore_fs::vfs::*;
 
@@ -65,9 +66,10 @@ impl FileSystem for Procfs {
                         //     info!("HAHA {:?}\n", process.keys().nth(i - 2));
                         // }
                         process
-                            .keys()
+                            .iter()
+                            .filter(|(_, p)| !p.lock().hidden)
                             .nth(i - 2)
-                            .map(|x| x.to_string())
+                            .map(|(pid, _)| pid.to_string())
                             .ok_or(FsError::EntryNotFound)
                     }
                 }
@@ -80,9 +82,13 @@ impl FileSystem for Procfs {
                         name.parse::<usize>()
                             .ok()
                             .and_then(|pid| {
-                                process
-                                    .get(&pid)
-                                    .map(|_| Arc::new(entry::ProcfsEntryDir { pid }) as Arc<dyn INode>)
+                                process.get(&pid).and_then(|p| match p.lock().hidden {
+                                    false => {
+                                        Some(Arc::new(entry::ProcfsEntryDir { pid })
+                                            as Arc<dyn INode>)
+                                    }
+                                    true => None,
+                                })
                             })
                             .ok_or(FsError::EntryNotFound)
                     }
