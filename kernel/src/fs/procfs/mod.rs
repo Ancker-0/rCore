@@ -83,8 +83,7 @@ impl FileSystem for Procfs {
                     "." | ".." => Ok(Procfs::new().root_inode()),
                     "self" => {
                         let thread = current_thread().unwrap();
-                        let proc = thread.proc.lock();
-                        Ok(Arc::new(entry::ProcfsEntryDir { pid: proc.pid.0 }))
+                        Ok(Arc::new(entry::ProcfsEntryDir { proc: Arc::downgrade(&thread.proc) }))
                     }
                     name => {
                         let process = PROCESSES.read();
@@ -93,7 +92,7 @@ impl FileSystem for Procfs {
                             .and_then(|pid| {
                                 process.get(&pid).and_then(|p| match p.lock().hidden {
                                     false => {
-                                        Some(Arc::new(entry::ProcfsEntryDir { pid })
+                                        Some(Arc::new(entry::ProcfsEntryDir { proc: Arc::downgrade(p) })
                                             as Arc<dyn INode>)
                                     }
                                     true => None,

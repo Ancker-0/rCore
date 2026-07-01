@@ -1,8 +1,6 @@
 use crate::{fs::Pseudo, sync::SpinNoIrqLock as Mutex};
 use alloc::{
-    fmt,
-    string::{String, ToString},
-    sync::Arc,
+    fmt, string::{String, ToString}, sync::{Arc, Weak},
 };
 use pc_keyboard::KeyCode::T;
 use rcore_fs::vfs::{FileType::File, *};
@@ -14,7 +12,8 @@ use crate::{
 };
 
 pub struct ProcfsEntryDir {
-    pub pid: usize,
+    // pub pid: usize,
+    pub proc: Weak<Mutex<Process>>,
 }
 
 impl INode for ProcfsEntryDir {
@@ -64,9 +63,7 @@ impl INode for ProcfsEntryDir {
             0 => Ok(String::from(".")),
             1 => Ok(String::from("..")),
             i => {
-                let process = PROCESSES.read();
-                let p = process.get(&self.pid);
-                if let Some(p) = p {
+                if let Some(p) = self.proc.upgrade() {
                     if p.lock().hidden {
                         Err(FsError::EntryNotFound)
                     } else {
@@ -85,8 +82,7 @@ impl INode for ProcfsEntryDir {
         match name {
             "." | ".." => Ok(Procfs::new().root_inode()),
             name => {
-                let process = PROCESSES.read();
-                let p = process.get(&self.pid);
+                let p = self.proc.upgrade();
                 if let Some(p) = p {
                     if p.lock().hidden {
                         Err(FsError::EntryNotFound)
@@ -95,7 +91,7 @@ impl INode for ProcfsEntryDir {
                             PROC_ENTRIES.iter().position(|entry| entry.name == name)
                         {
                             Ok(Arc::new(ProcfsEntry {
-                                pid: self.pid,
+                                proc: self.proc.clone(),
                                 entry_id,
                             }))
                         } else {
@@ -115,14 +111,13 @@ impl INode for ProcfsEntryDir {
 }
 
 pub struct ProcfsEntry {
-    pub pid: usize,
+    pub proc: Weak<Mutex<Process>>,
     entry_id: usize,
 }
 
 impl INode for ProcfsEntry {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
-        let process = PROCESSES.read();
-        let p = process.get(&self.pid);
+        let p = self.proc.upgrade();
         if let Some(p) = p {
             if p.lock().hidden {
                 Err(FsError::EntryNotFound)
