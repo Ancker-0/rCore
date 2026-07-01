@@ -39,6 +39,7 @@ pub struct MachineContext {
     pub t4: usize,
     pub t5: usize,
     pub t6: usize,
+    pub pc: usize,
 }
 
 impl MachineContext {
@@ -54,7 +55,7 @@ impl MachineContext {
             t2: tf.general.t2,
             s0: tf.general.s0,
             s1: tf.general.s1,
-            a0: tf.general.a1,
+            a0: tf.general.a0,
             a1: tf.general.a1,
             a2: tf.general.a2,
             a3: tf.general.a3,
@@ -76,10 +77,45 @@ impl MachineContext {
             t4: tf.general.t4,
             t5: tf.general.t5,
             t6: tf.general.t6,
+            pc: tf.sepc,
         }
     }
 
-    pub fn fill_tf(&self, ctx: &mut UserContext) {}
+    pub fn fill_tf(&self, ctx: &mut UserContext) {
+        ctx.general.zero = self.zero;
+        ctx.general.ra = self.ra;
+        ctx.general.sp = self.sp;
+        ctx.general.gp = self.gp;
+        ctx.general.tp = self.tp;
+        ctx.general.t0 = self.t0;
+        ctx.general.t1 = self.t1;
+        ctx.general.t2 = self.t2;
+        ctx.general.s0 = self.s0;
+        ctx.general.s1 = self.s1;
+        ctx.general.a0 = self.a0;
+        ctx.general.a1 = self.a1;
+        ctx.general.a2 = self.a2;
+        ctx.general.a3 = self.a3;
+        ctx.general.a4 = self.a4;
+        ctx.general.a5 = self.a5;
+        ctx.general.a6 = self.a6;
+        ctx.general.a7 = self.a7;
+        ctx.general.s2 = self.s2;
+        ctx.general.s3 = self.s3;
+        ctx.general.s4 = self.s4;
+        ctx.general.s5 = self.s5;
+        ctx.general.s6 = self.s6;
+        ctx.general.s7 = self.s7;
+        ctx.general.s8 = self.s8;
+        ctx.general.s9 = self.s9;
+        ctx.general.s10 = self.s10;
+        ctx.general.s11 = self.s11;
+        ctx.general.t3 = self.t3;
+        ctx.general.t4 = self.t4;
+        ctx.general.t5 = self.t5;
+        ctx.general.t6 = self.t6;
+        ctx.sepc = self.pc;
+    }
 }
 
 // TODO
@@ -92,12 +128,14 @@ pub fn set_signal_handler(
     signo: usize,
     siginfo: *const Siginfo,
     ucontext: *const SignalUserContext,
+    ra: usize,
 ) {
     tf.general.sp = sp;
-    tf.sepc = handler;
+    tf.sepc = handler;  // TODO: why?
 
     // pass handler argument
     tf.general.a0 = signo as usize;
     tf.general.a1 = siginfo as usize;
     tf.general.a2 = ucontext as usize;
+    tf.general.ra = ra;
 }

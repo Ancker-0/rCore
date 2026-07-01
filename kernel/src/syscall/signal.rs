@@ -48,12 +48,13 @@ impl Syscall<'_> {
     pub fn sys_rt_sigreturn(&mut self) -> SysResult {
         info!("rt_sigreturn");
         // 8: return addr
-        let ptr: UserInPtr<SignalFrame> = UserInPtr::from(self.context.get_sp() - 8);
+        let ptr: UserInPtr<SignalFrame> = UserInPtr::from(self.context.get_sp());
         let frame: SignalFrame = ptr.read()?;
 
         // restore signal alternate stack
         let mut inner = self.thread.inner.lock();
         inner.signal_alternate_stack = frame.ucontext.stack;
+        inner.sig_mask = frame.ucontext.sig_mask;
         drop(inner);
 
         // restore context

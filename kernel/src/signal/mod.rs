@@ -262,6 +262,7 @@ pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
                     info.signo as usize,
                     &frame.info as *const Siginfo,
                     &frame.ucontext as *const SignalUserContext,
+                    frame.ret_code_addr,
                 );
             }
         }
