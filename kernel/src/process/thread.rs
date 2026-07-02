@@ -73,6 +73,8 @@ pub struct ThreadInner {
     pub clear_child_tid: usize,
     /// Signal mask
     pub sig_mask: Sigset,
+    /// 用户态 sig_mask 的地址(0 = 未注册,使用上面的内核 sig_mask)
+    pub sig_mask_ptr: usize,
     /// signal alternate stack
     pub signal_alternate_stack: SignalStack,
 }
@@ -330,6 +332,7 @@ impl Thread {
                 }),
                 clear_child_tid: 0,
                 sig_mask: Sigset::default(),
+                sig_mask_ptr: 0,
                 signal_alternate_stack: SignalStack::default(),
             }),
             vm: vm.clone(),
@@ -414,6 +417,7 @@ impl Thread {
                 }),
                 clear_child_tid: 0,
                 sig_mask,
+                sig_mask_ptr: self.inner.lock().sig_mask_ptr,
                 signal_alternate_stack: sigaltstack,
             }),
             vm,
@@ -459,6 +463,7 @@ impl Thread {
                 clear_child_tid,
                 context: Some(thread_context),
                 sig_mask,
+                sig_mask_ptr: self.inner.lock().sig_mask_ptr,
                 signal_alternate_stack: sigaltstack,
             }),
             vm: self.vm.clone(),

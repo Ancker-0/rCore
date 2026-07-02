@@ -56,4 +56,12 @@ impl Syscall<'_> {
         }
         Ok(0)
     }
+
+    /// 注册用户态 sig_mask 槽地址;之后内核经此地址读写本线程的信号掩码。
+    pub fn sys_register_sigmask(&self, ptr: usize) -> SysResult {
+        unsafe { self.vm().check_write_ptr(ptr as *mut u64)?; }
+        self.thread.inner.lock().sig_mask_ptr = ptr;
+        info!("register_sigmask: ptr = {:#x}", ptr);
+        Ok(0)
+    }
 }

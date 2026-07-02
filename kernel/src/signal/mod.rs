@@ -129,6 +129,32 @@ pub struct SignalFrame {
 }
 
 /// return whether this thread exits
+/// 读取当前线程的 sig_mask:注册了用户态槽(sig_mask_ptr≠0)就从用户内存读,
+/// 否则用内核 ThreadInner.sig_mask(给 busybox 等未注册程序兜底)。
+pub fn read_sig_mask(thread: &Arc<Thread>) -> Sigset {
+    let ptr = thread.inner.lock().sig_mask_ptr;
+    if ptr != 0 {
+        let vm = thread.vm.lock();
+        if let Ok(slot) = unsafe { vm.check_read_ptr(ptr as *const u64) } {
+            return Sigset::from_u64(*slot);
+        }
+    }
+    thread.inner.lock().sig_mask
+}
+
+/// 写入当前线程的 sig_mask:同上,优先用户内存槽,否则内核 sig_mask。
+pub fn write_sig_mask(thread: &Arc<Thread>, mask: Sigset) {
+    let ptr = thread.inner.lock().sig_mask_ptr;
+    if ptr != 0 {
+        let vm = thread.vm.lock();
+        if let Ok(slot) = unsafe { vm.check_write_ptr(ptr as *mut u64) } {
+            *slot = mask.get();
+            return;
+        }
+    }
+    thread.inner.lock().sig_mask = mask;
+}
+
 pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
     let mut process = thread.proc.lock();
     while let Some((idx, info)) =
@@ -138,10 +164,7 @@ pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
             .enumerate()
             .find_map(|(idx, &(info, tid))| {
                 if (tid == -1 || tid as usize == thread.tid)
-                    && !thread
-                        .inner
-                        .lock()
-                        .sig_mask
+                    && !read_sig_mask(thread)
                         .contains(FromPrimitive::from_i32(info.signo).unwrap())
                 {
                     Some((idx, info))
@@ -190,19 +213,19 @@ pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
             _ => {
                 info!("goto handler at {:#x}", action.handler);
 
-                // save original sig mask
-                let mut inner = thread.inner.lock();
-                let sig_mask = inner.sig_mask;
-
-                // update sig mask (see man sigaction(2))
-                // 1. block current
-                // 2. block mask in disposition
-                inner.sig_mask.add(signal);
-                inner.sig_mask.add_set(&action.mask);
+                // 备份原 sig_mask,并 block 当前信号 + sa_mask。
+                // 经 helper:注册了用户态槽则读写用户内存,否则用内核 sig_mask(busybox 兜底)。
+                let sig_mask = {
+                    let old = read_sig_mask(thread);
+                    let mut new = old;
+                    new.add(signal);
+                    new.add_set(&action.mask);
+                    write_sig_mask(thread, new);
+                    old
+                };
 
                 // save original signal alternate stack
-                let stack = inner.signal_alternate_stack;
-                drop(inner);
+                let stack = thread.inner.lock().signal_alternate_stack;
 
                 let sig_sp = {
                     // use signal alternate stack when SA_ONSTACK is set
@@ -238,12 +261,13 @@ pub fn handle_signal(thread: &Arc<Thread>, tf: &mut UserContext) -> bool {
                 } {
                     frame
                 } else {
+                    error!("OHOHO");
                     unimplemented!()
                 };
                 frame.info = info;
                 frame.ucontext = SignalUserContext {
                     flags: 0,
-                    link: 0,
+                    link: thread.inner.lock().sig_mask_ptr,
                     stack,
                     context: MachineContext::from_tf(tf),
                     sig_mask,

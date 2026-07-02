@@ -31,6 +31,14 @@ impl Sigset {
         Sigset(0)
     }
 
+    /// Raw u64 of the mask (for user-memory-backed sig_mask).
+    pub fn get(&self) -> u64 {
+        self.0
+    }
+    pub fn from_u64(v: u64) -> Self {
+        Sigset(v)
+    }
+
     pub fn contains(&self, sig: Signal) -> bool {
         (self.0 >> sig as u64 & 1) != 0
     }

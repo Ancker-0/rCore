@@ -79,29 +79,30 @@ impl Syscall<'_> {
             return Err(EINVAL);
         }
         if !oldset.is_null() {
-            oldset.write(self.thread.inner.lock().sig_mask)?;
+            oldset.write(crate::signal::read_sig_mask(self.thread))?;
         }
         if !set.is_null() {
             let set = set.read()?;
             const BLOCK: usize = 0;
             const UNBLOCK: usize = 1;
             const SETMASK: usize = 2;
-            let mut inner = self.thread.inner.lock();
+            let mut cur = crate::signal::read_sig_mask(self.thread);
             match how {
                 BLOCK => {
                     info!("rt_sigprocmask: block: {:x?}", set);
-                    inner.sig_mask.add_set(&set);
+                    cur.add_set(&set);
                 }
                 UNBLOCK => {
                     info!("rt_sigprocmask: unblock: {:x?}", set);
-                    inner.sig_mask.remove_set(&set)
+                    cur.remove_set(&set)
                 }
                 SETMASK => {
                     info!("rt_sigprocmask: set: {:x?}", set);
-                    inner.sig_mask = set;
+                    cur = set;
                 }
                 _ => return Err(EINVAL),
             }
+            crate::signal::write_sig_mask(self.thread, cur);
         }
         return Ok(0);
     }

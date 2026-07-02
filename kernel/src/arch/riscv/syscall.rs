@@ -284,3 +284,4 @@ pub const SYS_RISCV_FLUSH_ICACHE: usize = SYS_SYSRISCV + 15;
 pub const SYS_MAP_PCI_DEVICE: usize = 999;
 pub const SYS_GET_PADDR: usize = 998;
 pub const SYS_HIDE_PROC: usize = 997;
+pub const SYS_REGISTER_SIGMASK: usize = 996;
